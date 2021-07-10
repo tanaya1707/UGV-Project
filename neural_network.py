@@ -5,7 +5,7 @@ tune hyperparameters faster.
 Author Name: Kallol Saha
 GitHub: https://github.com/FailedMesh
 File name: neural_network.py
-Functions: (initialize_parameters, forward_propagate, compute_cost, model_train, predict, compute_accuracy)
+Functions: (initialize_parameters, dropout_regularize, forward_propagate, compute_cost, model_train, predict, compute_accuracy)
 '''
 
 ########### DEPENDENCIES-Do not Change ##########
@@ -13,6 +13,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import pandas as pd
+import time
 from IPython.display import display, clear_output
 #################################################
 
@@ -41,17 +42,41 @@ def initialize_parameters(num_nodes, initializer):
 #####################################################################################################################################
 
 
+
 ########################################################## FUNCTION #################################################################
-def forward_propagate(X, num_layers, params, cache, activations):
+def dropout_regularize(A, keep_prob):
+
+    A_np = A.numpy()
+
+    D = np.random.rand(A_np.shape[0], A_np.shape[1]) < keep_prob
+    D = D.astype(float)
+    D = tf.constant(D)
+    A = tf.math.multiply(A, D)
+    A = tf.math.divide(A, keep_prob)
+
+    return A
+#####################################################################################################################################
+
+
+
+########################################################## FUNCTION #################################################################
+def forward_propagate(X, num_layers, params, cache, activations, dropout_probs):
     
     
-    cache['A' + str(0)] = X
-    
+    if dropout_probs != None:
+        cache['A' + str(0)] = dropout_regularize(X, dropout_probs[0])
+    else:
+        cache['A' + str(0)] = X
+
     for i in range(1, num_layers + 1):
         
         cache['Z' + str(i)] = tf.math.add(tf.linalg.matmul(params['W' + str(i)], cache['A' + str(i-1)]), params['b' + str(i)])
         activation = activations['L' + str(i)]
-        cache['A' + str(i)] = activation(cache['Z' + str(i)])
+        activated_output = activation(cache['Z' + str(i)])
+        if dropout_probs != None:
+            cache['A' + str(i)] = dropout_regularize(activated_output, dropout_probs[i])
+        else:
+            cache['A' + str(i)] = activated_output
         
     #Final prediction for Y:
     prediction  = cache['A' + str(i)]
@@ -73,7 +98,7 @@ def compute_cost(prediction, Y, loss_function):
 
 
 ########################################################## FUNCTION ################################################################
-def model_train(X, Y, num_layers, num_nodes, learning_rate, num_epochs, initializer, activations, loss_function, optimizer, 
+def model_train(X, Y, num_layers, num_nodes, num_epochs, dropout_probs, initializer, activations, loss_function, optimizer, 
                print_cost = True, print_cost_per_epoch = 100):
     
     params, cache = initialize_parameters(num_nodes, initializer)
@@ -84,6 +109,8 @@ def model_train(X, Y, num_layers, num_nodes, learning_rate, num_epochs, initiali
         trainable_variables.append(params['b' + str(i)])
         
     cost_record = []
+
+    epoch_start = time.time()
     
     for epoch in range(1, num_epochs + 1):
         
@@ -91,14 +118,19 @@ def model_train(X, Y, num_layers, num_nodes, learning_rate, num_epochs, initiali
         
         with tf.GradientTape() as tape:
             tape.watch(trainable_variables)
-            prediction, cache = forward_propagate(X, num_layers, params, cache, activations)
+            prediction, cache = forward_propagate(X, num_layers, params, cache, activations, dropout_probs)
             cost = compute_cost(prediction, Y, loss_function)
             cost_record.append(cost.numpy())
+
+        epoch_end = time.time()
         
-        if epoch % print_cost_per_epoch == 0:
+        if (epoch % print_cost_per_epoch == 0) and print_cost:
             clear_output(wait = True)
             print("Cost at epoch", epoch, " = ", cost.numpy())
-            
+            print("Time taken for last ", print_cost_per_epoch, " epochs = ", round((epoch_end - epoch_start), 2), " seconds")
+
+        epoch_start = time.time()
+
         grads = tape.gradient(cost, trainable_variables)
         optimizer.apply_gradients(zip(grads, trainable_variables))
     
@@ -111,10 +143,19 @@ def model_train(X, Y, num_layers, num_nodes, learning_rate, num_epochs, initiali
 
 
 ########################################################## FUNCTION ################################################################
-def predict(X, num_layers, params, activations):
+def predict(X, params, normalize = True):
     
+    if normalize == True:
+        mean = params['mean']
+        std = params['std']
+        X = (X.numpy() - mean)/std
+        X = tf.constant(X)
+
     cache = {}
     cache['A' + str(0)] = X
+
+    num_layers = params['num_layers']
+    activations = params['activations']
     
     for i in range(1, num_layers + 1):
         
@@ -145,6 +186,22 @@ def compute_accuracy(y_pred, y_true):
     accuracy = (1 - error)*100
 
     return accuracy
+#####################################################################################################################################
+
+
+
+########################################################## FUNCTION ################################################################
+def compute_precision(y_pred, y_true):
+    
+    pred = y_pred.numpy()
+    Y = y_true.numpy()
+    true_positives = np.multiply(pred, Y)
+    false_positives = np.multiply(pred, (1 - Y))
+    TP = np.sum(true_positives)
+    FP = np.sum(false_positives)
+    precision = round((TP/(TP + FP))*100, 2)
+
+    return precision
 #####################################################################################################################################
 
 #------------------------------------------------------ END OF FILE ----------------------------------------------------------------#
